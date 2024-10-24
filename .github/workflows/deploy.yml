@@ -1,0 +1,54 @@
+name: Deploy TypeScript Express App to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18.20.2"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build TypeScript Project
+        run: npm run build
+
+      - name: Archive Build Artifacts
+        run: zip -r build.zip ./dist ./node_modules package.json pm2.config.js
+
+      - name: Copy Files to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_PUBLIC_IP }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          source: "build.zip"
+          target: "/home/ec2-user/server_app"
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.EC2_PUBLIC_IP }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/ec2-user/server_app
+            unzip -o build.zip -d .
+            npm install --production  # Install only production dependencies
+            export VITE_FRONTEND_APP_URL=${{ secrets.VITE_FRONTEND_APP_URL }}  # Set the environment variable
+            pm2 stop express-backend || true
+            pm2 delete express-backend || true
+            pm2 start dist/app.js --name "express-backend"  # Adjust the entry point as necessary
+            pm2 save
+          debug: true
